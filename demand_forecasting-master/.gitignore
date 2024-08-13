@@ -1,0 +1,10 @@
+/.env
+/__pycache__
+/.vscode
+/log/*
+/forecast_results/*
+/dataset/*
+/lightning_logs/*
+_*
+load_sa.py
+
