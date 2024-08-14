@@ -972,6 +972,886 @@
 #     return forecast, evaluate_metrics
 
 
+# import streamlit as st
+# import pandas as pd
+# import numpy as np
+# from forecasting_metrics import evaluate
+# from statsmodels.tsa.seasonal import STL
+# from statsmodels.tsa.holtwinters import ExponentialSmoothing as ets
+
+# def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
+#     # 1. PREPARE DATA
+    
+#     # Convert the column year_month to datetime64
+#     df['year_month'] = pd.to_datetime(df['year_month'] + '01', format='%Y%m%d')
+
+#     # Set year_month as index
+#     df = df.set_index('year_month')
+
+#     # Split the main dataset into train and test datasets
+#     train_periods = len(df) - test_periods
+#     train = df.iloc[:train_periods]
+#     test = df.iloc[train_periods:]
+
+#     # Create a dataframe with the training and test datasets
+#     forecast = pd.DataFrame(index=df.index)
+#     forecast['train'] = train['demand']
+#     forecast['test'] = test['demand']
+
+#     # Check if forecast columns for each model are non-empty
+#     if forecast.empty:
+#         st.write("Forecast DataFrame is empty.")
+    
+#     # Check the forecast and test data
+#     st.write("Forecast DataFrame Preview:", forecast.head())
+#     st.write("Test Data:", forecast['test'].head())
+
+#     if 'ARIMA' in model_list:
+#         from pmdarima.arima import auto_arima
+        
+#         if len(train) > 12 and train['demand'].std() > 0:
+#             try:
+#                 arima_model = auto_arima(
+#                     y=train['demand'], 
+#                     start_p=2, 
+#                     max_p=5, 
+#                     d=None, 
+#                     start_q=2, 
+#                     max_q=5, 
+#                     start_P=1, 
+#                     seasonal=seasonal >= 3,
+#                     m=12, 
+#                     D=0,
+#                     n_fits=10, 
+#                     trace=False, 
+#                     error_action='ignore',
+#                     suppress_warnings=True, 
+#                     stepwise=True, 
+#                     information_criterion='aic'
+#                 )
+                
+#                 forecast_arima = pd.DataFrame(arima_model.predict(test_periods + periods), index=test.index)
+#                 forecast_arima.columns = ['ARIMA']
+#                 forecast = pd.concat([forecast, forecast_arima], axis=1)
+#             except ValueError as e:
+#                 st.write(f"ARIMA failed: {e}")
+#                 forecast['ARIMA'] = np.nan
+#         else:
+#             st.write("Not enough data for ARIMA or data is constant.")
+#             forecast['ARIMA'] = np.nan
+
+#     if 'STL' in model_list:
+#         if isinstance(seasonal, int) and seasonal >= 3 and seasonal % 2 == 1:
+#             stl_seasonal = seasonal
+#         else:
+#             stl_seasonal = 7
+
+#         try:
+#             stl = STL(train['demand'], seasonal=stl_seasonal, period=12)
+#             stl_result = stl.fit()
+#             stl_forecast = stl_result.trend[-test_periods:] + stl_result.seasonal[-test_periods:]
+
+#             future_index = pd.date_range(start=test.index[-1] + pd.DateOffset(months=1), periods=periods, freq='MS')
+#             extended_forecast = pd.Series(stl_forecast.iloc[-1], index=future_index)
+
+#             stl_forecast = pd.concat([pd.Series(stl_forecast, index=test.index), extended_forecast])
+
+#             forecast['STL'] = stl_forecast
+
+#         except ValueError as e:
+#             st.write(f"STL failed: {e}")
+#             forecast['STL'] = np.nan
+
+#     if 'ETS' in model_list:
+#         if len(train) >= 24:
+#             seasonal_ets = 'add' if seasonal else None
+#         else:
+#             seasonal_ets = None
+        
+#         trend_ets = 'add' if trend else None
+        
+#         try:
+#             ets_model = ets(train['demand'], trend=trend_ets, seasonal=seasonal_ets).fit()
+#             forecast_ets = pd.DataFrame(ets_model.predict(start=train_periods, end=len(df) + periods - 1), index=test.index)
+#             forecast_ets.columns = ['ETS']
+#             forecast_ets[forecast_ets < 0] = 0
+#             forecast = pd.concat([forecast, forecast_ets], axis=1)
+#         except ValueError as e:
+#             st.write(f"ETS failed: {e}")
+#             forecast['ETS'] = np.nan
+    
+#     if 'Prophet' in model_list:
+#         from prophet import Prophet
+
+#         pro_model = Prophet()
+#         df_pro = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         pro_model.fit(df_pro)
+
+#         future = pro_model.make_future_dataframe(periods=periods, freq='MS', include_history=True)
+#         test_and_future = future.iloc[train_periods:]
+#         forecast_pro = pro_model.predict(test_and_future)
+#         forecast_pro_renamed = forecast_pro[['ds', 'yhat']].rename(columns={'ds': 'year_month', 'yhat': 'Prophet'})
+#         forecast_pro_renamed = forecast_pro_renamed.set_index('year_month')
+#         forecast_pro_renamed[forecast_pro_renamed < 0] = 0
+#         forecast = pd.concat([forecast, forecast_pro_renamed], axis=1)
+
+#     if 'Neural Prophet' in model_list:
+#         from neuralprophet import NeuralProphet
+
+#         npro_model = NeuralProphet()
+
+#         if 'Prophet' not in model_list:
+#             df_npro = df.reset_index()
+#         else:
+#             df_npro = df.copy()
+
+#         # Drop unnecessary columns
+#         df_npro = df_npro[['year_month', 'demand']].rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         npro_model.fit(df_npro, freq='MS', epochs=50)
+
+#         future = npro_model.make_future_dataframe(df_npro, periods=periods, n_historic_predictions=len(df))
+#         test_and_future = future.iloc[train_periods:]
+#         forecast_npro = npro_model.predict(test_and_future)
+#         forecast_npro_renamed = forecast_npro[['ds', 'yhat1']].rename(columns={'ds': 'year_month', 'yhat1': 'Neural Prophet'})
+#         forecast_npro_renamed = forecast_npro_renamed.set_index('year_month')
+#         forecast_npro_renamed[forecast_npro_renamed < 0] = 0
+#         forecast = pd.concat([forecast, forecast_npro_renamed], axis=1)
+
+#     # Check if forecast contains valid predictions
+#     for model in model_list:
+#         if model not in forecast.columns or forecast[model].isna().all():
+#             st.write(f"No valid predictions for model: {model}")
+#         else:
+#             st.write(f"Valid predictions found for model: {model}")
+
+#     # Calculate the evaluation metrics
+#     try:
+#         forecast_eval = forecast.iloc[train_periods:len(df)]
+#         evaluate_metrics = {
+#             model: evaluate(forecast_eval['test'], forecast_eval[model], metrics=('mape', 'maape', 'rmse', 'mse', 'mae'))
+#             for model in model_list if model in forecast.columns and not forecast[model].isna().all()
+#         }
+#         evaluate_metrics = pd.DataFrame(evaluate_metrics)
+#     except Exception as e:
+#         st.write(f"Error calculating evaluation metrics: {e}")
+
+#     # Check if evaluate_metrics is empty
+#     if evaluate_metrics.empty:
+#         st.write("Evaluation metrics are empty.")
+#     else:
+#         evaluate_metrics = evaluate_metrics.apply(pd.to_numeric, errors='coerce')
+#         evaluate_metrics = evaluate_metrics.dropna(how='all')
+#         evaluate_metrics['Best model'] = evaluate_metrics.idxmin(axis=1)
+#         numeric_cols = evaluate_metrics.select_dtypes(include=['number']).columns
+#         evaluate_metrics['Best model value'] = evaluate_metrics[numeric_cols].min(axis=1)
+#         st.write("Evaluation Metrics Summary:", evaluate_metrics)
+
+#     return forecast, evaluate_metrics
+
+
+# import streamlit as st
+# import pandas as pd
+# import numpy as np
+# from forecasting_metrics import evaluate
+# from statsmodels.tsa.seasonal import STL
+# from statsmodels.tsa.holtwinters import ExponentialSmoothing as ets
+
+# def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
+#     # 1. PREPARE DATA
+    
+#     # Convert the column year_month to datetime64
+#     df['year_month'] = pd.to_datetime(df['year_month'] + '01', format='%Y%m%d')
+
+#     # Set year_month as index
+#     df = df.set_index('year_month')
+
+#     # Split the main dataset into train and test datasets
+#     train_periods = len(df) - test_periods
+#     train = df.iloc[:train_periods]
+#     test = df.iloc[train_periods:]
+
+#     # Create a dataframe with the training and test datasets
+#     forecast = pd.DataFrame(index=df.index)
+#     forecast['train'] = train['demand']
+#     forecast['test'] = test['demand']
+
+#     # Check if forecast columns for each model are non-empty
+#     if forecast.empty:
+#         st.write("Forecast DataFrame is empty.")
+    
+#     # Check the forecast and test data
+#     st.write("Forecast DataFrame Preview:", forecast.head())
+#     st.write("Test Data:", forecast['test'].head())
+
+#     if 'ARIMA' in model_list:
+#         from pmdarima.arima import auto_arima
+        
+#         if len(train) > 12 and train['demand'].std() > 0:
+#             try:
+#                 arima_model = auto_arima(
+#                     y=train['demand'], 
+#                     start_p=2, 
+#                     max_p=5, 
+#                     d=None, 
+#                     start_q=2, 
+#                     max_q=5, 
+#                     start_P=1, 
+#                     seasonal=seasonal >= 3,
+#                     m=12, 
+#                     D=0,
+#                     n_fits=10, 
+#                     trace=False, 
+#                     error_action='ignore',
+#                     suppress_warnings=True, 
+#                     stepwise=True, 
+#                     information_criterion='aic'
+#                 )
+                
+#                 forecast_arima = pd.DataFrame(arima_model.predict(test_periods + periods), index=test.index)
+#                 forecast_arima.columns = ['ARIMA']
+#                 forecast = pd.concat([forecast, forecast_arima], axis=1)
+#             except ValueError as e:
+#                 st.write(f"ARIMA failed: {e}")
+#                 forecast['ARIMA'] = np.nan
+#         else:
+#             st.write("Not enough data for ARIMA or data is constant.")
+#             forecast['ARIMA'] = np.nan
+
+#     if 'STL' in model_list:
+#         if isinstance(seasonal, int) and seasonal >= 3 and seasonal % 2 == 1:
+#             stl_seasonal = seasonal
+#         else:
+#             stl_seasonal = 7
+
+#         try:
+#             stl = STL(train['demand'], seasonal=stl_seasonal, period=12)
+#             stl_result = stl.fit()
+#             stl_forecast = stl_result.trend[-test_periods:] + stl_result.seasonal[-test_periods:]
+
+#             future_index = pd.date_range(start=test.index[-1] + pd.DateOffset(months=1), periods=periods, freq='MS')
+#             extended_forecast = pd.Series(stl_forecast.iloc[-1], index=future_index)
+
+#             stl_forecast = pd.concat([pd.Series(stl_forecast, index=test.index), extended_forecast])
+
+#             forecast['STL'] = stl_forecast
+
+#         except ValueError as e:
+#             st.write(f"STL failed: {e}")
+#             forecast['STL'] = np.nan
+
+#     if 'ETS' in model_list:
+#         if len(train) >= 24:
+#             seasonal_ets = 'add' if seasonal else None
+#         else:
+#             seasonal_ets = None
+        
+#         trend_ets = 'add' if trend else None
+        
+#         try:
+#             ets_model = ets(train['demand'], trend=trend_ets, seasonal=seasonal_ets).fit()
+#             forecast_ets = pd.DataFrame(ets_model.predict(start=train_periods, end=len(df) + periods - 1), index=test.index)
+#             forecast_ets.columns = ['ETS']
+#             forecast_ets[forecast_ets < 0] = 0
+#             forecast = pd.concat([forecast, forecast_ets], axis=1)
+#         except ValueError as e:
+#             st.write(f"ETS failed: {e}")
+#             forecast['ETS'] = np.nan
+    
+#     if 'Prophet' in model_list:
+#         from prophet import Prophet
+
+#         pro_model = Prophet()
+#         df_pro = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         pro_model.fit(df_pro)
+
+#         future = pro_model.make_future_dataframe(periods=periods, freq='MS', include_history=True)
+#         test_and_future = future.iloc[train_periods:]
+#         forecast_pro = pro_model.predict(test_and_future)
+#         forecast_pro_renamed = forecast_pro[['ds', 'yhat']].rename(columns={'ds': 'year_month', 'yhat': 'Prophet'})
+#         forecast_pro_renamed = forecast_pro_renamed.set_index('year_month')
+#         forecast_pro_renamed[forecast_pro_renamed < 0] = 0
+#         forecast = pd.concat([forecast, forecast_pro_renamed], axis=1)
+
+#     if 'Neural Prophet' in model_list:
+#         from neuralprophet import NeuralProphet
+
+#         npro_model = NeuralProphet()
+
+#         if 'Prophet' not in model_list:
+#             df_npro = df.reset_index()
+#         else:
+#             df_npro = df.copy()
+
+#         df_npro = df_npro.rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         npro_model.fit(df_npro, freq='MS', epochs=50)
+
+#         future = npro_model.make_future_dataframe(df_npro, periods=periods, n_historic_predictions=len(df))
+#         test_and_future = future.iloc[train_periods:]
+#         forecast_npro = npro_model.predict(test_and_future)
+#         forecast_npro_renamed = forecast_npro[['ds', 'yhat1']].rename(columns={'ds': 'year_month', 'yhat1': 'Neural Prophet'})
+#         forecast_npro_renamed = forecast_npro_renamed.set_index('year_month')
+#         forecast_npro_renamed[forecast_npro_renamed < 0] = 0
+#         forecast = pd.concat([forecast, forecast_npro_renamed], axis=1)
+
+#     # Check if forecast contains valid predictions
+#     for model in model_list:
+#         if model not in forecast.columns or forecast[model].isna().all():
+#             st.write(f"No valid predictions for model: {model}")
+#         else:
+#             st.write(f"Valid predictions found for model: {model}")
+
+#     # Calculate the evaluation metrics
+#     try:
+#         forecast_eval = forecast.iloc[train_periods:len(df)]
+#         evaluate_metrics = {
+#             model: evaluate(forecast_eval['test'], forecast_eval[model], metrics=('mape', 'maape', 'rmse', 'mse', 'mae'))
+#             for model in model_list if model in forecast.columns and not forecast[model].isna().all()
+#         }
+#         evaluate_metrics = pd.DataFrame(evaluate_metrics)
+#     except Exception as e:
+#         st.write(f"Error calculating evaluation metrics: {e}")
+
+#     # Check if evaluate_metrics is empty
+#     if evaluate_metrics.empty:
+#         st.write("Evaluation metrics are empty.")
+#     else:
+#         evaluate_metrics = evaluate_metrics.apply(pd.to_numeric, errors='coerce')
+#         evaluate_metrics = evaluate_metrics.dropna(how='all')
+#         evaluate_metrics['Best model'] = evaluate_metrics.idxmin(axis=1)
+#         numeric_cols = evaluate_metrics.select_dtypes(include=['number']).columns
+#         evaluate_metrics['Best model value'] = evaluate_metrics[numeric_cols].min(axis=1)
+#         st.write("Evaluation Metrics Summary:", evaluate_metrics)
+
+#     return forecast, evaluate_metrics
+
+
+# import streamlit as st
+# import pandas as pd
+# import numpy as np
+# from forecasting_metrics import evaluate
+# from statsmodels.tsa.seasonal import STL
+# from statsmodels.tsa.holtwinters import ExponentialSmoothing as ets
+
+# def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
+#     # 1. PREPARE DATA
+    
+#     # Convert the column year_month to datetime64
+#     df['year_month'] = pd.to_datetime(df['year_month'] + '01', format='%Y%m%d')
+
+#     # Set year_month as index
+#     df = df.set_index('year_month')
+
+#     # Split the main dataset into train and test datasets
+#     train_periods = len(df) - test_periods
+#     train = df.iloc[:train_periods]
+#     test = df.iloc[train_periods:]
+
+#     # Create a dataframe with the training and test datasets
+#     forecast = pd.DataFrame(index=df.index)
+#     forecast['train'] = train['demand']
+#     forecast['test'] = test['demand']
+
+#     # Check if forecast columns for each model are non-empty
+#     if forecast.empty:
+#         st.write("Forecast DataFrame is empty.")
+    
+#     # Check the forecast and test data
+#     st.write("Forecast DataFrame Preview:", forecast.head())
+#     st.write("Test Data:", forecast['test'].head())
+
+#     if 'ARIMA' in model_list:
+#         from pmdarima.arima import auto_arima
+        
+#         if len(train) > 12 and train['demand'].std() > 0:
+#             try:
+#                 arima_model = auto_arima(
+#                     y=train['demand'], 
+#                     start_p=2, 
+#                     max_p=5, 
+#                     d=None, 
+#                     start_q=2, 
+#                     max_q=5, 
+#                     start_P=1, 
+#                     seasonal=seasonal >= 3,
+#                     m=12, 
+#                     D=0,
+#                     n_fits=10, 
+#                     trace=False, 
+#                     error_action='ignore',
+#                     suppress_warnings=True, 
+#                     stepwise=True, 
+#                     information_criterion='aic'
+#                 )
+                
+#                 forecast_arima = pd.DataFrame(arima_model.predict(test_periods + periods), index=test.index)
+#                 forecast_arima.columns = ['ARIMA']
+#                 forecast = pd.concat([forecast, forecast_arima], axis=1)
+#             except ValueError as e:
+#                 st.write(f"ARIMA failed: {e}")
+#                 forecast['ARIMA'] = np.nan
+#         else:
+#             st.write("Not enough data for ARIMA or data is constant.")
+#             forecast['ARIMA'] = np.nan
+
+#     if 'STL' in model_list:
+#         if isinstance(seasonal, int) and seasonal >= 3 and seasonal % 2 == 1:
+#             stl_seasonal = seasonal
+#         else:
+#             stl_seasonal = 7
+
+#         try:
+#             stl = STL(train['demand'], seasonal=stl_seasonal, period=12)
+#             stl_result = stl.fit()
+#             stl_forecast = stl_result.trend[-test_periods:] + stl_result.seasonal[-test_periods:]
+
+#             future_index = pd.date_range(start=test.index[-1] + pd.DateOffset(months=1), periods=periods, freq='MS')
+#             extended_forecast = pd.Series(stl_forecast.iloc[-1], index=future_index)
+
+#             stl_forecast = pd.concat([pd.Series(stl_forecast, index=test.index), extended_forecast])
+
+#             forecast['STL'] = stl_forecast
+
+#         except ValueError as e:
+#             st.write(f"STL failed: {e}")
+#             forecast['STL'] = np.nan
+
+#     if 'ETS' in model_list:
+#         if len(train) >= 24:
+#             seasonal_ets = 'add' if seasonal else None
+#         else:
+#             seasonal_ets = None
+        
+#         trend_ets = 'add' if trend else None
+        
+#         try:
+#             ets_model = ets(train['demand'], trend=trend_ets, seasonal=seasonal_ets).fit()
+#             forecast_ets = pd.DataFrame(ets_model.predict(start=train_periods, end=len(df) + periods - 1), index=test.index)
+#             forecast_ets.columns = ['ETS']
+#             forecast_ets[forecast_ets < 0] = 0
+#             forecast = pd.concat([forecast, forecast_ets], axis=1)
+#         except ValueError as e:
+#             st.write(f"ETS failed: {e}")
+#             forecast['ETS'] = np.nan
+    
+#     if 'Prophet' in model_list:
+#         from prophet import Prophet
+
+#         pro_model = Prophet()
+#         df_pro = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         pro_model.fit(df_pro)
+
+#         future = pro_model.make_future_dataframe(periods=periods, freq='MS', include_history=True)
+#         test_and_future = future.iloc[train_periods:]
+#         forecast_pro = pro_model.predict(test_and_future)
+#         forecast_pro_renamed = forecast_pro[['ds', 'yhat']].rename(columns={'ds': 'year_month', 'yhat': 'Prophet'})
+#         forecast_pro_renamed = forecast_pro_renamed.set_index('year_month')
+#         forecast_pro_renamed[forecast_pro_renamed < 0] = 0
+#         forecast = pd.concat([forecast, forecast_pro_renamed], axis=1)
+
+#     if 'Neural Prophet' in model_list:
+#         from neuralprophet import NeuralProphet
+
+#         npro_model = NeuralProphet()
+
+#         df_npro = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         npro_model.fit(df_npro, freq='MS', epochs=50)
+
+#         future = npro_model.make_future_dataframe(df_npro, periods=periods, n_historic_predictions=len(df))
+#         test_and_future = future.iloc[train_periods:]
+#         forecast_npro = npro_model.predict(test_and_future)
+#         forecast_npro_renamed = forecast_npro[['ds', 'yhat1']].rename(columns={'ds': 'year_month', 'yhat1': 'Neural Prophet'})
+#         forecast_npro_renamed = forecast_npro_renamed.set_index('year_month')
+#         forecast_npro_renamed[forecast_npro_renamed < 0] = 0
+#         forecast = pd.concat([forecast, forecast_npro_renamed], axis=1)
+
+#     # Check if forecast contains valid predictions
+#     for model in model_list:
+#         if model not in forecast.columns or forecast[model].isna().all():
+#             st.write(f"No valid predictions for model: {model}")
+#         else:
+#             st.write(f"Valid predictions found for model: {model}")
+
+#     # Calculate the evaluation metrics
+#     try:
+#         forecast_eval = forecast.iloc[train_periods:len(df)]
+#         evaluate_metrics = {
+#             model: evaluate(forecast_eval['test'], forecast_eval[model], metrics=('mape', 'maape', 'rmse', 'mse', 'mae'))
+#             for model in model_list if model in forecast.columns and not forecast[model].isna().all()
+#         }
+#         evaluate_metrics = pd.DataFrame(evaluate_metrics)
+#     except Exception as e:
+#         st.write(f"Error calculating evaluation metrics: {e}")
+
+#     # Check if evaluate_metrics is empty
+#     if evaluate_metrics.empty:
+#         st.write("Evaluation metrics are empty.")
+#     else:
+#         evaluate_metrics = evaluate_metrics.apply(pd.to_numeric, errors='coerce')
+#         evaluate_metrics = evaluate_metrics.dropna(how='all')
+#         evaluate_metrics['Best model'] = evaluate_metrics.idxmin(axis=1)
+#         numeric_cols = evaluate_metrics.select_dtypes(include=['number']).columns
+#         evaluate_metrics['Best model value'] = evaluate_metrics[numeric_cols].min(axis=1)
+#         st.write("Evaluation Metrics Summary:", evaluate_metrics)
+
+#     return forecast, evaluate_metrics
+
+
+
+# import streamlit as st
+# import pandas as pd
+# import numpy as np
+# from forecasting_metrics import evaluate_all
+# from statsmodels.tsa.seasonal import STL
+# from statsmodels.tsa.holtwinters import ExponentialSmoothing as ets
+
+# def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
+#     # 1. PREPARE DATA
+    
+#     # Convert the column year_month to datetime64
+#     df['year_month'] = pd.to_datetime(df['year_month'] + '01', format='%Y%m%d')
+
+#     # Set year_month as index
+#     df = df.set_index('year_month')
+
+#     # Split the main dataset into train and test datasets
+#     train_periods = len(df) - test_periods
+#     train = df.iloc[:train_periods]
+#     test = df.iloc[train_periods:]
+
+#     # Create a dataframe with the training and test datasets
+#     forecast = pd.DataFrame(index=df.index)
+#     forecast['train'] = train['demand']
+#     forecast['test'] = test['demand']
+
+#     # Check if forecast columns for each model are non-empty
+#     if forecast.empty:
+#         st.write("Forecast DataFrame is empty.")
+    
+#     # Check the forecast and test data
+#     st.write("Forecast DataFrame Preview:", forecast.head())
+#     st.write("Test Data:", forecast['test'].head())
+
+#     if 'ARIMA' in model_list:
+#         from pmdarima.arima import auto_arima
+        
+#         if len(train) > 12 and train['demand'].std() > 0:
+#             try:
+#                 arima_model = auto_arima(
+#                     y=train['demand'], 
+#                     start_p=2, 
+#                     max_p=5, 
+#                     d=None, 
+#                     start_q=2, 
+#                     max_q=5, 
+#                     start_P=1, 
+#                     seasonal=seasonal >= 3,
+#                     m=12, 
+#                     D=0,
+#                     n_fits=10, 
+#                     trace=False, 
+#                     error_action='ignore',
+#                     suppress_warnings=True, 
+#                     stepwise=True, 
+#                     information_criterion='aic'
+#                 )
+                
+#                 forecast_arima = pd.DataFrame(arima_model.predict(test_periods + periods), index=test.index)
+#                 forecast_arima.columns = ['ARIMA']
+#                 forecast = pd.concat([forecast, forecast_arima], axis=1)
+#             except ValueError as e:
+#                 st.write(f"ARIMA failed: {e}")
+#                 forecast['ARIMA'] = np.nan
+#         else:
+#             st.write("Not enough data for ARIMA or data is constant.")
+#             forecast['ARIMA'] = np.nan
+
+#     if 'STL' in model_list:
+#         if isinstance(seasonal, int) and seasonal >= 3 and seasonal % 2 == 1:
+#             stl_seasonal = seasonal
+#         else:
+#             stl_seasonal = 7
+
+#         try:
+#             stl = STL(train['demand'], seasonal=stl_seasonal, period=12)
+#             stl_result = stl.fit()
+#             stl_forecast = stl_result.trend[-test_periods:] + stl_result.seasonal[-test_periods:]
+
+#             future_index = pd.date_range(start=test.index[-1] + pd.DateOffset(months=1), periods=periods, freq='MS')
+#             extended_forecast = pd.Series(stl_forecast.iloc[-1], index=future_index)
+
+#             stl_forecast = pd.concat([pd.Series(stl_forecast, index=test.index), extended_forecast])
+
+#             forecast['STL'] = stl_forecast
+
+#         except ValueError as e:
+#             st.write(f"STL failed: {e}")
+#             forecast['STL'] = np.nan
+
+#     if 'ETS' in model_list:
+#         if len(train) >= 24:
+#             seasonal_ets = 'add' if seasonal else None
+#         else:
+#             seasonal_ets = None
+        
+#         trend_ets = 'add' if trend else None
+        
+#         try:
+#             ets_model = ets(train['demand'], trend=trend_ets, seasonal=seasonal_ets).fit()
+#             forecast_ets = pd.DataFrame(ets_model.predict(start=train_periods, end=len(df) + periods - 1), index=test.index)
+#             forecast_ets.columns = ['ETS']
+#             forecast_ets[forecast_ets < 0] = 0
+#             forecast = pd.concat([forecast, forecast_ets], axis=1)
+#         except ValueError as e:
+#             st.write(f"ETS failed: {e}")
+#             forecast['ETS'] = np.nan
+    
+#     if 'Prophet' in model_list:
+#         from prophet import Prophet
+
+#         pro_model = Prophet()
+#         df_pro = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         pro_model.fit(df_pro)
+
+#         future = pro_model.make_future_dataframe(periods=periods, freq='MS', include_history=True)
+#         test_and_future = future.iloc[train_periods:]
+#         forecast_pro = pro_model.predict(test_and_future)
+#         forecast_pro_renamed = forecast_pro[['ds', 'yhat']].rename(columns={'ds': 'year_month', 'yhat': 'Prophet'})
+#         forecast_pro_renamed = forecast_pro_renamed.set_index('year_month')
+#         forecast_pro_renamed[forecast_pro_renamed < 0] = 0
+#         forecast = pd.concat([forecast, forecast_pro_renamed], axis=1)
+
+#     if 'Neural Prophet' in model_list:
+#         from neuralprophet import NeuralProphet
+
+#         npro_model = NeuralProphet()
+
+#         df_npro = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         df_npro = df_npro.drop(columns=['item'], errors='ignore')  # Drop the item column to avoid errors
+
+#         try:
+#             npro_model.fit(df_npro, freq='MS', epochs=50)
+
+#             future = npro_model.make_future_dataframe(df_npro, periods=periods, n_historic_predictions=len(df))
+#             test_and_future = future.iloc[train_periods:]
+#             forecast_npro = npro_model.predict(test_and_future)
+#             forecast_npro_renamed = forecast_npro[['ds', 'yhat1']].rename(columns={'ds': 'year_month', 'yhat1': 'Neural Prophet'})
+#             forecast_npro_renamed = forecast_npro_renamed.set_index('year_month')
+#             forecast_npro_renamed[forecast_npro_renamed < 0] = 0
+#             forecast = pd.concat([forecast, forecast_npro_renamed], axis=1)
+#         except ValueError as e:
+#             st.write(f"Neural Prophet failed: {e}")
+#             forecast['Neural Prophet'] = np.nan
+
+#     # Check if forecast contains valid predictions
+#     for model in model_list:
+#         if model not in forecast.columns or forecast[model].isna().all():
+#             st.write(f"No valid predictions for model: {model}")
+#         else:
+#             st.write(f"Valid predictions found for model: {model}")
+
+#     # Calculate the evaluation metrics
+#     try:
+#         forecast_eval = forecast.iloc[train_periods:len(df)]
+#         evaluate_metrics = {
+#             model: evaluate_all(forecast_eval['test'], forecast_eval[model])
+#             for model in model_list if model in forecast.columns and not forecast[model].isna().all()
+#         }
+#         evaluate_metrics = pd.DataFrame(evaluate_metrics)
+#     except Exception as e:
+#         st.write(f"Error calculating evaluation metrics: {e}")
+
+#     # Check if evaluate_metrics is empty
+#     if evaluate_metrics.empty:
+#         st.write("Evaluation metrics are empty.")
+#     else:
+#         evaluate_metrics = evaluate_metrics.apply(pd.to_numeric, errors='coerce')
+#         evaluate_metrics = evaluate_metrics.dropna(how='all')
+#         evaluate_metrics['Best model'] = evaluate_metrics.idxmin(axis=1)
+#         numeric_cols = evaluate_metrics.select_dtypes(include=['number']).columns
+#         evaluate_metrics['Best model value'] = evaluate_metrics[numeric_cols].min(axis=1)
+#         st.write("Evaluation Metrics Summary:", evaluate_metrics)
+
+#     return forecast, evaluate_metrics
+
+
+# import streamlit as st
+# import pandas as pd
+# import numpy as np
+# from forecasting_metrics import evaluate
+# from statsmodels.tsa.seasonal import STL
+# from statsmodels.tsa.holtwinters import ExponentialSmoothing as ets
+
+# def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
+#     # 1. PREPARE DATA
+    
+#     # Convert the column year_month to datetime64
+#     df['year_month'] = pd.to_datetime(df['year_month'] + '01', format='%Y%m%d')
+
+#     # Set year_month as index
+#     df = df.set_index('year_month')
+
+#     # Ensure frequency is set to MS (month start) for ARIMA and STL
+#     if df.index.freq is None:
+#         df = df.asfreq('MS')
+
+#     # Split the main dataset into train and test datasets
+#     train_periods = len(df) - test_periods
+#     train = df.iloc[:train_periods]
+#     test = df.iloc[train_periods:]
+
+#     # Create a dataframe with the training and test datasets
+#     forecast = pd.DataFrame(index=df.index)
+#     forecast['train'] = train['demand']
+#     forecast['test'] = test['demand']
+
+#     # Check if forecast columns for each model are non-empty
+#     if forecast.empty:
+#         st.write("Forecast DataFrame is empty.")
+    
+#     # Check the forecast and test data
+#     st.write("Forecast DataFrame Preview:", forecast.head())
+#     st.write("Test Data:", forecast['test'].head())
+
+#     if 'ARIMA' in model_list:
+#         from pmdarima.arima import auto_arima
+
+#         if len(train) > 12 and train['demand'].std() > 0:
+#             try:
+#                 arima_model = auto_arima(
+#                     y=train['demand'].diff().dropna(),  # Differencing the data to make it stationary
+#                     start_p=2, 
+#                     max_p=5, 
+#                     d=None, 
+#                     start_q=2, 
+#                     max_q=5, 
+#                     start_P=1, 
+#                     seasonal=seasonal >= 3,
+#                     m=12, 
+#                     D=0,
+#                     n_fits=10, 
+#                     trace=False, 
+#                     error_action='ignore',
+#                     suppress_warnings=True, 
+#                     stepwise=True, 
+#                     information_criterion='aic'
+#                 )
+
+#                 arima_forecast = arima_model.predict(n_periods=test_periods + periods)
+#                 arima_forecast = pd.Series(arima_forecast, index=test.index)
+#                 arima_forecast = arima_forecast.cumsum() + train['demand'].iloc[-1]  # Invert differencing
+
+#                 forecast_arima = pd.DataFrame(arima_forecast, columns=['ARIMA'])
+#                 forecast = pd.concat([forecast, forecast_arima], axis=1)
+#             except ValueError as e:
+#                 st.write(f"ARIMA failed: {e}")
+#                 forecast['ARIMA'] = np.nan
+#         else:
+#             st.write("Not enough data for ARIMA or data is constant.")
+#             forecast['ARIMA'] = np.nan
+
+#     if 'STL' in model_list:
+#         if isinstance(seasonal, int) and seasonal >= 3 and seasonal % 2 == 1:
+#             stl_seasonal = seasonal
+#         else:
+#             stl_seasonal = 7
+
+#         try:
+#             stl = STL(train['demand'], seasonal=stl_seasonal, period=12)
+#             stl_result = stl.fit()
+#             stl_forecast = stl_result.trend[-test_periods:] + stl_result.seasonal[-test_periods:]
+
+#             future_index = pd.date_range(start=test.index[-1] + pd.DateOffset(months=1), periods=periods, freq='MS')
+#             extended_forecast = pd.Series(stl_forecast.iloc[-1], index=future_index)
+
+#             stl_forecast = pd.concat([pd.Series(stl_forecast, index=test.index), extended_forecast])
+
+#             forecast['STL'] = stl_forecast
+
+#         except ValueError as e:
+#             st.write(f"STL failed: {e}")
+#             forecast['STL'] = np.nan
+
+#     if 'ETS' in model_list:
+#         if len(train) >= 24:
+#             seasonal_ets = 'add' if seasonal else None
+#         else:
+#             seasonal_ets = None
+        
+#         trend_ets = 'add' if trend else None
+        
+#         try:
+#             ets_model = ets(train['demand'], trend=trend_ets, seasonal=seasonal_ets).fit()
+#             forecast_ets = pd.DataFrame(ets_model.predict(start=train_periods, end=len(df) + periods - 1), index=test.index)
+#             forecast_ets.columns = ['ETS']
+#             forecast_ets[forecast_ets < 0] = 0
+#             forecast = pd.concat([forecast, forecast_ets], axis=1)
+#         except ValueError as e:
+#             st.write(f"ETS failed: {e}")
+#             forecast['ETS'] = np.nan
+    
+#     if 'Prophet' in model_list:
+#         from prophet import Prophet
+
+#         pro_model = Prophet()
+#         df_pro = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         pro_model.fit(df_pro)
+
+#         future = pro_model.make_future_dataframe(periods=periods, freq='MS', include_history=True)
+#         test_and_future = future.iloc[train_periods:]
+#         forecast_pro = pro_model.predict(test_and_future)
+#         forecast_pro_renamed = forecast_pro[['ds', 'yhat']].rename(columns={'ds': 'year_month', 'yhat': 'Prophet'})
+#         forecast_pro_renamed = forecast_pro_renamed.set_index('year_month')
+#         forecast_pro_renamed[forecast_pro_renamed < 0] = 0
+#         forecast = pd.concat([forecast, forecast_pro_renamed], axis=1)
+
+#     if 'Neural Prophet' in model_list:
+#         from neuralprophet import NeuralProphet
+
+#         npro_model = NeuralProphet()
+
+#         df_npro = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
+#         npro_model.fit(df_npro, freq='MS', epochs=50)
+
+#         future = npro_model.make_future_dataframe(df_npro, periods=periods, n_historic_predictions=len(df))
+#         test_and_future = future.iloc[train_periods:]
+#         forecast_npro = npro_model.predict(test_and_future)
+#         forecast_npro_renamed = forecast_npro[['ds', 'yhat1']].rename(columns={'ds': 'year_month', 'yhat1': 'Neural Prophet'})
+#         forecast_npro_renamed = forecast_npro_renamed.set_index('year_month')
+#         forecast_npro_renamed[forecast_npro_renamed < 0] = 0
+#         forecast = pd.concat([forecast, forecast_npro_renamed], axis=1)
+
+#     # Check if forecast contains valid predictions
+#     for model in model_list:
+#         if model not in forecast.columns or forecast[model].isna().all():
+#             st.write(f"No valid predictions for model: {model}")
+#         else:
+#             st.write(f"Valid predictions found for model: {model}")
+
+#     # Calculate the evaluation metrics
+#     try:
+#         forecast_eval = forecast.iloc[train_periods:len(df)]
+#         evaluate_metrics = {
+#             model: evaluate(forecast_eval['test'], forecast_eval[model], metrics=('mape', 'maape', 'rmse', 'mse', 'mae'))
+#             for model in model_list if model in forecast.columns and not forecast[model].isna().all()
+#         }
+#         evaluate_metrics = pd.DataFrame(evaluate_metrics)
+#     except Exception as e:
+#         st.write(f"Error calculating evaluation metrics: {e}")
+
+#     # Check if evaluate_metrics is empty
+#     if evaluate_metrics.empty:
+#         st.write("Evaluation metrics are empty.")
+#     else:
+#         evaluate_metrics = evaluate_metrics.apply(pd.to_numeric, errors='coerce')
+#         evaluate_metrics = evaluate_metrics.dropna(how='all')
+#         evaluate_metrics['Best model'] = evaluate_metrics.idxmin(axis=1)
+#         numeric_cols = evaluate_metrics.select_dtypes(include=['number']).columns
+#         evaluate_metrics['Best model value'] = evaluate_metrics[numeric_cols].min(axis=1)
+#         st.write("Evaluation Metrics Summary:", evaluate_metrics)
+
+#     return forecast, evaluate_metrics
+
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -998,21 +1878,17 @@ def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
     forecast['train'] = train['demand']
     forecast['test'] = test['demand']
 
-    # Check if forecast columns for each model are non-empty
-    if forecast.empty:
-        st.write("Forecast DataFrame is empty.")
-    
-    # Check the forecast and test data
-    st.write("Forecast DataFrame Preview:", forecast.head())
-    st.write("Test Data:", forecast['test'].head())
-
+    # ARIMA Model
     if 'ARIMA' in model_list:
         from pmdarima.arima import auto_arima
         
-        if len(train) > 12 and train['demand'].std() > 0:
+        arima_train = train[['demand']].copy()
+        arima_test = test[['demand']].copy()
+
+        if len(arima_train) > 12 and arima_train['demand'].std() > 0:
             try:
                 arima_model = auto_arima(
-                    y=train['demand'], 
+                    y=arima_train['demand'], 
                     start_p=2, 
                     max_p=5, 
                     d=None, 
@@ -1030,7 +1906,7 @@ def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
                     information_criterion='aic'
                 )
                 
-                forecast_arima = pd.DataFrame(arima_model.predict(test_periods + periods), index=test.index)
+                forecast_arima = pd.DataFrame(arima_model.predict(test_periods + periods), index=arima_test.index)
                 forecast_arima.columns = ['ARIMA']
                 forecast = pd.concat([forecast, forecast_arima], axis=1)
             except ValueError as e:
@@ -1040,21 +1916,25 @@ def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
             st.write("Not enough data for ARIMA or data is constant.")
             forecast['ARIMA'] = np.nan
 
+    # STL Model
     if 'STL' in model_list:
+        stl_train = train[['demand']].copy()
+        stl_test = test[['demand']].copy()
+
         if isinstance(seasonal, int) and seasonal >= 3 and seasonal % 2 == 1:
             stl_seasonal = seasonal
         else:
             stl_seasonal = 7
 
         try:
-            stl = STL(train['demand'], seasonal=stl_seasonal, period=12)
+            stl = STL(stl_train['demand'], seasonal=stl_seasonal, period=12)
             stl_result = stl.fit()
             stl_forecast = stl_result.trend[-test_periods:] + stl_result.seasonal[-test_periods:]
 
-            future_index = pd.date_range(start=test.index[-1] + pd.DateOffset(months=1), periods=periods, freq='MS')
+            future_index = pd.date_range(start=stl_test.index[-1] + pd.DateOffset(months=1), periods=periods, freq='MS')
             extended_forecast = pd.Series(stl_forecast.iloc[-1], index=future_index)
 
-            stl_forecast = pd.concat([pd.Series(stl_forecast, index=test.index), extended_forecast])
+            stl_forecast = pd.concat([pd.Series(stl_forecast, index=stl_test.index), extended_forecast])
 
             forecast['STL'] = stl_forecast
 
@@ -1062,8 +1942,12 @@ def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
             st.write(f"STL failed: {e}")
             forecast['STL'] = np.nan
 
+    # ETS Model
     if 'ETS' in model_list:
-        if len(train) >= 24:
+        ets_train = train[['demand']].copy()
+        ets_test = test[['demand']].copy()
+
+        if len(ets_train) >= 24:
             seasonal_ets = 'add' if seasonal else None
         else:
             seasonal_ets = None
@@ -1071,8 +1955,8 @@ def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
         trend_ets = 'add' if trend else None
         
         try:
-            ets_model = ets(train['demand'], trend=trend_ets, seasonal=seasonal_ets).fit()
-            forecast_ets = pd.DataFrame(ets_model.predict(start=train_periods, end=len(df) + periods - 1), index=test.index)
+            ets_model = ets(ets_train['demand'], trend=trend_ets, seasonal=seasonal_ets).fit()
+            forecast_ets = pd.DataFrame(ets_model.predict(start=train_periods, end=len(df) + periods - 1), index=ets_test.index)
             forecast_ets.columns = ['ETS']
             forecast_ets[forecast_ets < 0] = 0
             forecast = pd.concat([forecast, forecast_ets], axis=1)
@@ -1080,12 +1964,14 @@ def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
             st.write(f"ETS failed: {e}")
             forecast['ETS'] = np.nan
     
+    # Prophet Model
     if 'Prophet' in model_list:
         from prophet import Prophet
 
+        prophet_df = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
         pro_model = Prophet()
-        df_pro = df.reset_index().rename(columns={'year_month': 'ds', 'demand': 'y'})
-        pro_model.fit(df_pro)
+
+        pro_model.fit(prophet_df)
 
         future = pro_model.make_future_dataframe(periods=periods, freq='MS', include_history=True)
         test_and_future = future.iloc[train_periods:]
@@ -1095,34 +1981,24 @@ def forecast(df, test_periods, periods, model_list, seasonal=7, trend=True):
         forecast_pro_renamed[forecast_pro_renamed < 0] = 0
         forecast = pd.concat([forecast, forecast_pro_renamed], axis=1)
 
+    # Neural Prophet Model
     if 'Neural Prophet' in model_list:
         from neuralprophet import NeuralProphet
 
+        # Create a new DataFrame with just the 'ds' and 'y' columns
+        neuralprophet_df = df.reset_index()[['year_month', 'demand']].rename(columns={'year_month': 'ds', 'demand': 'y'})
+        
         npro_model = NeuralProphet()
 
-        if 'Prophet' not in model_list:
-            df_npro = df.reset_index()
-        else:
-            df_npro = df.copy()
+        npro_model.fit(neuralprophet_df, freq='MS', epochs=50)
 
-        # Drop unnecessary columns
-        df_npro = df_npro[['year_month', 'demand']].rename(columns={'year_month': 'ds', 'demand': 'y'})
-        npro_model.fit(df_npro, freq='MS', epochs=50)
-
-        future = npro_model.make_future_dataframe(df_npro, periods=periods, n_historic_predictions=len(df))
+        future = npro_model.make_future_dataframe(neuralprophet_df, periods=periods, n_historic_predictions=len(df))
         test_and_future = future.iloc[train_periods:]
         forecast_npro = npro_model.predict(test_and_future)
         forecast_npro_renamed = forecast_npro[['ds', 'yhat1']].rename(columns={'ds': 'year_month', 'yhat1': 'Neural Prophet'})
         forecast_npro_renamed = forecast_npro_renamed.set_index('year_month')
         forecast_npro_renamed[forecast_npro_renamed < 0] = 0
         forecast = pd.concat([forecast, forecast_npro_renamed], axis=1)
-
-    # Check if forecast contains valid predictions
-    for model in model_list:
-        if model not in forecast.columns or forecast[model].isna().all():
-            st.write(f"No valid predictions for model: {model}")
-        else:
-            st.write(f"Valid predictions found for model: {model}")
 
     # Calculate the evaluation metrics
     try:
